@@ -1,0 +1,17 @@
+{
+  "name": "pi-profiles",
+  "version": "0.1.0",
+  "description": "VS Code-style resource profiles for pi: switch skills, extensions, prompts, tools, models, thinking, and instructions.",
+  "keywords": ["pi-package", "pi", "profiles", "extensions", "skills", "prompts"],
+  "license": "MIT",
+  "type": "commonjs",
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}
