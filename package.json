@@ -5,6 +5,9 @@
   "keywords": ["pi-package", "pi", "profiles", "extensions", "skills", "prompts"],
   "license": "MIT",
   "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  },
   "pi": {
     "extensions": ["./extensions"]
   },
