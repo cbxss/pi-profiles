@@ -35,7 +35,6 @@ Example:
 
 ```json
 {
-  "default": "coding",
   "profiles": {
     "coding": {
       "description": "Default coding setup",
@@ -66,3 +65,4 @@ Relative paths are resolved from the `profiles.json` file that defines the profi
 - Skills, prompts, and themes are contributed through Pi's `resources_discover` event.
 - Profile-managed extensions are written into `~/.pi/agent/settings.json` under `extensions`, then Pi is reloaded. Keep those extension files outside `~/.pi/agent/extensions/` unless you want them always enabled.
 - Active state is stored in `~/.pi/agent/profiles-state.json`.
+- The code intentionally only supports the `{"profiles": {...}}` config shape to keep the extension small.

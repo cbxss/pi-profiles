@@ -1,5 +1,4 @@
 {
-  "default": "coding",
   "profiles": {
     "coding": {
       "description": "Default coding setup",

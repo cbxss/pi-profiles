@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -18,51 +18,21 @@ type Profile = {
   instructions?: string;
 };
 
-type LoadedProfile = Profile & {
-  name: string;
-  sourceFile: string;
-  baseDir: string;
-};
+type LoadedProfile = Profile & { name: string; source: string };
+type Config = { profiles?: Record<string, Profile> };
+type State = { active?: string; extensions?: string[]; updatedAt?: string };
 
-type ProfilesFile = {
-  default?: string;
-  profiles?: Record<string, Profile>;
-  [name: string]: unknown;
-};
+const AGENT_DIR = getAgentDir();
+const GLOBAL_CONFIG = join(AGENT_DIR, "profiles.json");
+const STATE_FILE = join(AGENT_DIR, "profiles-state.json");
+const SETTINGS_FILE = join(AGENT_DIR, "settings.json");
+const COMMANDS = ["list", "current", "use", "clear", "init"];
 
-type ProfileState = {
-  activeProfile?: string;
-  managedExtensions?: string[];
-  updatedAt?: string;
-};
-
-type LoadedProfiles = {
-  profiles: Record<string, LoadedProfile>;
-  defaultProfile?: string;
-  files: string[];
-};
-
-function agentDir(): string {
-  return getAgentDir();
-}
-
-function statePath(): string {
-  return join(agentDir(), "profiles-state.json");
-}
-
-function globalProfilesPath(): string {
-  return join(agentDir(), "profiles.json");
-}
-
-function projectProfilesPath(cwd: string): string {
+function projectConfig(cwd: string) {
   return join(cwd, ".pi", "profiles.json");
 }
 
-function settingsPath(): string {
-  return join(agentDir(), "settings.json");
-}
-
-function readJson<T>(path: string, fallback: T): T {
+function json<T>(path: string, fallback: T): T {
   if (!existsSync(path)) return fallback;
   try {
     return JSON.parse(readFileSync(path, "utf8")) as T;
@@ -72,140 +42,83 @@ function readJson<T>(path: string, fallback: T): T {
   }
 }
 
-function writeJson(path: string, data: unknown): void {
+function saveJson(path: string, data: unknown) {
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-  renameSync(tmp, path);
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
 }
 
-function expandUser(path: string): string {
-  if (path === "~") return process.env.HOME ?? path;
-  if (path.startsWith("~/")) return join(process.env.HOME ?? "", path.slice(2));
-  return path;
+function resolvePath(path: string, fromFile: string, cwd: string) {
+  path = path.replaceAll("${cwd}", cwd).replaceAll("{cwd}", cwd);
+  if (path === "~") path = process.env.HOME ?? path;
+  if (path.startsWith("~/")) path = join(process.env.HOME ?? "", path.slice(2));
+  return isAbsolute(path) ? path : resolve(dirname(fromFile), path);
 }
 
-function resolveResourcePath(rawPath: string, baseDir: string, cwd: string): string {
-  let path = rawPath.replaceAll("${cwd}", cwd).replaceAll("{cwd}", cwd);
-  path = expandUser(path);
-  if (isAbsolute(path)) return path;
-  return resolve(baseDir, path);
-}
-
-function normalizeProfile(name: string, profile: Profile, sourceFile: string, cwd: string): LoadedProfile {
-  const baseDir = dirname(sourceFile);
-  const resolveList = (items?: string[]) =>
-    items?.map((item) => resolveResourcePath(item, baseDir, cwd)).filter(Boolean);
-
-  return {
-    ...profile,
-    name,
-    sourceFile,
-    baseDir,
-    skills: resolveList(profile.skills),
-    prompts: resolveList(profile.prompts),
-    themes: resolveList(profile.themes),
-    extensions: resolveList(profile.extensions),
-  };
-}
-
-function profilesFromFile(path: string, cwd: string): { profiles: Record<string, LoadedProfile>; defaultProfile?: string } {
-  const raw = readJson<ProfilesFile | undefined>(path, undefined);
-  if (!raw) return { profiles: {} };
-
-  const rawProfiles = raw.profiles && typeof raw.profiles === "object"
-    ? raw.profiles
-    : Object.fromEntries(
-        Object.entries(raw).filter(([key, value]) =>
-          !["default", "version", "$schema"].includes(key) &&
-          value &&
-          typeof value === "object" &&
-          !Array.isArray(value),
-        ),
-      ) as Record<string, Profile>;
-
+function loadProfiles(cwd: string) {
   const profiles: Record<string, LoadedProfile> = {};
-  for (const [name, profile] of Object.entries(rawProfiles)) {
-    profiles[name] = normalizeProfile(name, profile, path, cwd);
-  }
 
-  return { profiles, defaultProfile: raw.default };
-}
-
-function loadProfiles(cwd: string): LoadedProfiles {
-  const files = [globalProfilesPath(), projectProfilesPath(cwd)].filter(existsSync);
-  const merged: Record<string, LoadedProfile> = {};
-  let defaultProfile: string | undefined;
-
-  for (const file of files) {
-    const loaded = profilesFromFile(file, cwd);
-    Object.assign(merged, loaded.profiles);
-    if (loaded.defaultProfile) defaultProfile = loaded.defaultProfile;
-  }
-
-  return { profiles: merged, defaultProfile, files };
-}
-
-function readState(): ProfileState {
-  return readJson<ProfileState>(statePath(), {});
-}
-
-function writeState(state: ProfileState): void {
-  writeJson(statePath(), { ...state, updatedAt: new Date().toISOString() });
-}
-
-function profileSummary(profile: LoadedProfile): string {
-  const parts: string[] = [];
-  if (profile.description) parts.push(profile.description);
-  if (profile.skills?.length) parts.push(`${profile.skills.length} skill path(s)`);
-  if (profile.prompts?.length) parts.push(`${profile.prompts.length} prompt path(s)`);
-  if (profile.themes?.length) parts.push(`${profile.themes.length} theme path(s)`);
-  if (profile.extensions?.length) parts.push(`${profile.extensions.length} extension path(s)`);
-  if (profile.tools?.length) parts.push(`tools:${profile.tools.join(",")}`);
-  if (profile.provider && profile.model) parts.push(`${profile.provider}/${profile.model}`);
-  if (profile.thinkingLevel) parts.push(`thinking:${profile.thinkingLevel}`);
-  return parts.join(" | ") || "No description";
-}
-
-function updateManagedExtensions(nextExtensions: string[]): string[] {
-  const state = readState();
-  const previous = new Set(state.managedExtensions ?? []);
-  const next = Array.from(new Set(nextExtensions));
-  const settings = readJson<Record<string, unknown>>(settingsPath(), {});
-  const current = Array.isArray(settings.extensions) ? settings.extensions.filter((item): item is string => typeof item === "string") : [];
-
-  const filtered = current.filter((entry) => !previous.has(entry));
-  const merged = Array.from(new Set([...filtered, ...next]));
-  settings.extensions = merged;
-  writeJson(settingsPath(), settings);
-  return next;
-}
-
-function removeManagedExtensions(): void {
-  const state = readState();
-  const previous = new Set(state.managedExtensions ?? []);
-  if (previous.size === 0) return;
-
-  const settings = readJson<Record<string, unknown>>(settingsPath(), {});
-  const current = Array.isArray(settings.extensions) ? settings.extensions.filter((item): item is string => typeof item === "string") : [];
-  settings.extensions = current.filter((entry) => !previous.has(entry));
-  writeJson(settingsPath(), settings);
-}
-
-async function applyRuntime(profile: LoadedProfile, pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-  if (profile.provider && profile.model) {
-    const model = ctx.modelRegistry.find(profile.provider, profile.model);
-    if (!model) {
-      ctx.ui.notify(`Profile "${profile.name}": model ${profile.provider}/${profile.model} not found`, "warning");
-    } else {
-      const ok = await pi.setModel(model);
-      if (!ok) ctx.ui.notify(`Profile "${profile.name}": no API key for ${profile.provider}/${profile.model}`, "warning");
+  for (const file of [GLOBAL_CONFIG, projectConfig(cwd)]) {
+    const config = json<Config>(file, {});
+    for (const [name, profile] of Object.entries(config.profiles ?? {})) {
+      const paths = (items?: string[]) => items?.map((item) => resolvePath(item, file, cwd));
+      profiles[name] = {
+        ...profile,
+        name,
+        source: file,
+        skills: paths(profile.skills),
+        prompts: paths(profile.prompts),
+        themes: paths(profile.themes),
+        extensions: paths(profile.extensions),
+      };
     }
   }
 
-  if (profile.thinkingLevel) {
-    pi.setThinkingLevel(profile.thinkingLevel);
+  return profiles;
+}
+
+function state(): State {
+  return json<State>(STATE_FILE, {});
+}
+
+function saveState(next: State) {
+  saveJson(STATE_FILE, { ...next, updatedAt: new Date().toISOString() });
+}
+
+function setProfileExtensions(next: string[] = []) {
+  const previous = new Set(state().extensions ?? []);
+  if (previous.size === 0 && next.length === 0) return [];
+
+  const settings = json<Record<string, unknown>>(SETTINGS_FILE, {});
+  const current = Array.isArray(settings.extensions)
+    ? settings.extensions.filter((item): item is string => typeof item === "string")
+    : [];
+
+  settings.extensions = Array.from(new Set([...current.filter((item) => !previous.has(item)), ...next]));
+  saveJson(SETTINGS_FILE, settings);
+  return next;
+}
+
+function summary(profile: LoadedProfile) {
+  return [
+    profile.description,
+    profile.skills?.length && `${profile.skills.length} skill path(s)`,
+    profile.prompts?.length && `${profile.prompts.length} prompt path(s)`,
+    profile.themes?.length && `${profile.themes.length} theme path(s)`,
+    profile.extensions?.length && `${profile.extensions.length} extension path(s)`,
+    profile.tools?.length && `tools:${profile.tools.join(",")}`,
+    profile.provider && profile.model && `${profile.provider}/${profile.model}`,
+    profile.thinkingLevel && `thinking:${profile.thinkingLevel}`,
+  ].filter(Boolean).join(" | ") || "No description";
+}
+
+async function applyRuntime(profile: LoadedProfile, pi: ExtensionAPI, ctx: ExtensionContext) {
+  if (profile.provider && profile.model) {
+    const model = ctx.modelRegistry.find(profile.provider, profile.model);
+    if (!model) ctx.ui.notify(`Profile "${profile.name}": model not found`, "warning");
+    else if (!(await pi.setModel(model))) ctx.ui.notify(`Profile "${profile.name}": no API key for model`, "warning");
   }
+
+  if (profile.thinkingLevel) pi.setThinkingLevel(profile.thinkingLevel);
 
   if (profile.tools?.length) {
     const known = new Set(pi.getAllTools().map((tool) => tool.name));
@@ -216,26 +129,50 @@ async function applyRuntime(profile: LoadedProfile, pi: ExtensionAPI, ctx: Exten
   }
 }
 
-function updateStatus(ctx: ExtensionContext, activeName?: string): void {
-  ctx.ui.setStatus("profiles", activeName ? ctx.ui.theme.fg("accent", `profile:${activeName}`) : undefined);
-}
-
-function usage(ctx: ExtensionContext): void {
-  ctx.ui.notify("Usage: /profiles [list|current|use <name>|clear|init]", "info");
-}
-
 export default function profilesExtension(pi: ExtensionAPI) {
-  let activeProfile: LoadedProfile | undefined;
+  let active: LoadedProfile | undefined;
 
-  function refreshActive(cwd: string): LoadedProfile | undefined {
-    const { profiles } = loadProfiles(cwd);
-    const state = readState();
-    activeProfile = state.activeProfile ? profiles[state.activeProfile] : undefined;
-    return activeProfile;
+  function refresh(cwd: string) {
+    const activeName = state().active;
+    active = activeName ? loadProfiles(cwd)[activeName] : undefined;
+    return active;
   }
 
-  pi.on("resources_discover", async (event) => {
-    const profile = refreshActive(event.cwd);
+  function setStatus(ctx: ExtensionContext) {
+    ctx.ui.setStatus("profiles", active ? ctx.ui.theme.fg("accent", `profile:${active.name}`) : undefined);
+  }
+
+  async function activate(name: string, ctx: ExtensionContext) {
+    const profile = loadProfiles(ctx.cwd)[name];
+    if (!profile) {
+      ctx.ui.notify(`Unknown profile "${name}"`, "error");
+      return;
+    }
+
+    const extensions = setProfileExtensions(profile.extensions);
+    saveState({ active: name, extensions });
+    active = profile;
+    await applyRuntime(profile, pi, ctx);
+    setStatus(ctx);
+    ctx.ui.notify(`Profile "${name}" activated. Reloading…`, "info");
+    await ctx.reload();
+  }
+
+  async function clear(ctx: ExtensionContext) {
+    setProfileExtensions([]);
+    saveState({ active: undefined, extensions: [] });
+    active = undefined;
+    setStatus(ctx);
+    ctx.ui.notify("Profile cleared. Reloading…", "info");
+    await ctx.reload();
+  }
+
+  function show(content: string) {
+    pi.sendMessage({ customType: "profiles", content, display: true });
+  }
+
+  pi.on("resources_discover", (event) => {
+    const profile = refresh(event.cwd);
     if (!profile) return;
     return {
       skillPaths: profile.skills ?? [],
@@ -245,129 +182,66 @@ export default function profilesExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const profile = refreshActive(ctx.cwd);
-    if (profile) {
-      await applyRuntime(profile, pi, ctx);
-      updateStatus(ctx, profile.name);
-    } else {
-      updateStatus(ctx, undefined);
-    }
+    refresh(ctx.cwd);
+    if (active) await applyRuntime(active, pi, ctx);
+    setStatus(ctx);
   });
 
-  pi.on("before_agent_start", async (event) => {
-    if (!activeProfile?.instructions) return;
-    return {
-      systemPrompt: `${event.systemPrompt}\n\n# Active pi profile: ${activeProfile.name}\n\n${activeProfile.instructions}`,
-    };
+  pi.on("before_agent_start", (event) => {
+    if (!active?.instructions) return;
+    return { systemPrompt: `${event.systemPrompt}\n\n# Active pi profile: ${active.name}\n\n${active.instructions}` };
   });
 
   pi.registerCommand("profiles", {
-    description: "Switch VS Code-style pi profiles (skills, extensions, prompts, tools, model, thinking, instructions)",
-    getArgumentCompletions: (prefix: string) => {
-      const { profiles } = loadProfiles(process.cwd());
-      const commands = ["list", "current", "use", "clear", "init"];
-      const profileNames = Object.keys(profiles);
-      const values = [...commands, ...profileNames].filter((value) => value.startsWith(prefix));
-      return values.length ? values.map((value) => ({ value, label: value })) : null;
+    description: "Switch pi profiles: skills, extensions, prompts, tools, model, thinking, instructions",
+    getArgumentCompletions(prefix) {
+      const names = Object.keys(loadProfiles(process.cwd()));
+      const matches = [...COMMANDS, ...names].filter((item) => item.startsWith(prefix));
+      return matches.length ? matches.map((value) => ({ value, label: value })) : null;
     },
-    handler: async (args, ctx) => {
-      const loaded = loadProfiles(ctx.cwd);
-      const state = readState();
-      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
-      const command = parts[0];
+    async handler(args, ctx) {
+      const [command, name] = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const profiles = loadProfiles(ctx.cwd);
+      const activeName = state().active;
 
       if (!command) {
-        const names = Object.keys(loaded.profiles).sort();
-        if (names.length === 0) {
-          ctx.ui.notify(`No profiles found. Run /profiles init or create ${globalProfilesPath()}`, "warning");
-          return;
-        }
-        const choice = await ctx.ui.select(
-          "Select profile",
-          ["(clear)", ...names.map((name) => `${name}${name === state.activeProfile ? " (active)" : ""}`)],
-        );
+        const names = Object.keys(profiles).sort();
+        if (!names.length) return ctx.ui.notify(`No profiles found. Run /profiles init`, "warning");
+        const choice = await ctx.ui.select("Select profile", ["(clear)", ...names.map((n) => n === activeName ? `${n} (active)` : n)]);
         if (!choice) return;
-        if (choice === "(clear)") parts.splice(0, parts.length, "clear");
-        else parts.splice(0, parts.length, "use", choice.replace(/ \(active\)$/, ""));
+        return choice === "(clear)" ? clear(ctx) : activate(choice.replace(/ \(active\)$/, ""), ctx);
       }
 
-      const action = parts[0];
-
-      if (action === "init") {
-        const target = globalProfilesPath();
-        if (existsSync(target)) {
-          ctx.ui.notify(`${target} already exists`, "warning");
-          return;
-        }
-        writeJson(target, {
-          default: "coding",
+      if (command === "init") {
+        if (existsSync(GLOBAL_CONFIG)) return ctx.ui.notify(`${GLOBAL_CONFIG} already exists`, "warning");
+        saveJson(GLOBAL_CONFIG, {
           profiles: {
             coding: {
               description: "Default coding setup",
-              skills: [],
-              prompts: [],
-              extensions: [],
               tools: ["read", "bash", "edit", "write"],
               thinkingLevel: "high",
               instructions: "You are in coding mode. Make focused, correct changes and validate them.",
             },
           },
         });
-        ctx.ui.notify(`Created ${target}`, "info");
-        await ctx.reload();
-        return;
+        ctx.ui.notify(`Created ${GLOBAL_CONFIG}. Reloading…`, "info");
+        return ctx.reload();
       }
 
-      if (action === "list") {
-        const names = Object.keys(loaded.profiles).sort();
-        if (names.length === 0) {
-          ctx.ui.notify(`No profiles found. Config files checked: ${[globalProfilesPath(), projectProfilesPath(ctx.cwd)].join(", ")}`, "warning");
-          return;
-        }
-        const text = names.map((name) => `${name === state.activeProfile ? "*" : " "} ${name} — ${profileSummary(loaded.profiles[name])}`).join("\n");
-        pi.sendMessage({ customType: "profiles", content: text, display: true });
-        return;
+      if (command === "list") {
+        const names = Object.keys(profiles).sort();
+        if (!names.length) return ctx.ui.notify(`No profiles found. Run /profiles init`, "warning");
+        return show(names.map((n) => `${n === activeName ? "*" : " "} ${n} — ${summary(profiles[n])}`).join("\n"));
       }
 
-      if (action === "current") {
-        const current = state.activeProfile ? loaded.profiles[state.activeProfile] : undefined;
-        const text = current
-          ? `Active profile: ${current.name}\n${profileSummary(current)}\nSource: ${current.sourceFile}`
-          : "No active profile.";
-        pi.sendMessage({ customType: "profiles", content: text, display: true });
-        return;
+      if (command === "current") {
+        const current = activeName ? profiles[activeName] : undefined;
+        return show(current ? `Active profile: ${current.name}\n${summary(current)}\nSource: ${current.source}` : "No active profile.");
       }
 
-      if (action === "clear") {
-        removeManagedExtensions();
-        writeState({ activeProfile: undefined, managedExtensions: [] });
-        activeProfile = undefined;
-        ctx.ui.notify("Profile cleared. Reloading resources…", "info");
-        await ctx.reload();
-        return;
-      }
-
-      const requestedName = action === "use" ? parts[1] : action;
-      if (!requestedName) {
-        usage(ctx);
-        return;
-      }
-
-      const profile = loaded.profiles[requestedName];
-      if (!profile) {
-        const available = Object.keys(loaded.profiles).sort().join(", ") || "(none)";
-        ctx.ui.notify(`Unknown profile "${requestedName}". Available: ${available}`, "error");
-        return;
-      }
-
-      const managedExtensions = updateManagedExtensions(profile.extensions ?? []);
-      writeState({ activeProfile: profile.name, managedExtensions });
-      activeProfile = profile;
-      await applyRuntime(profile, pi, ctx);
-      updateStatus(ctx, profile.name);
-      ctx.ui.notify(`Profile "${profile.name}" activated. Reloading resources…`, "info");
-      await ctx.reload();
-      return;
+      if (command === "clear") return clear(ctx);
+      if (command === "use") return name ? activate(name, ctx) : ctx.ui.notify("Usage: /profiles use <name>", "info");
+      return activate(command, ctx);
     },
   });
 }
