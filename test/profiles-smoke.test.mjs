@@ -44,7 +44,7 @@ test("/profiles use and clear update state and managed extensions", () => {
         extensions: ["./profile-extensions/security-tools"],
         tools: ["read", "bash", "edit", "write"],
         thinkingLevel: "high",
-        instructions: "Track hypotheses.",
+        appendSystemPrompt: "Track hypotheses.",
       },
     },
   }, null, 2));

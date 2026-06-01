@@ -1,6 +1,6 @@
 # pi-profiles
 
-Profiles for pi. Switch skills, prompts, extensions, tools, model settings, and extra instructions with `/profiles`.
+Profiles for pi. Switch skills, prompts, extensions, tools, model settings, and appended system prompt with `/profiles`.
 
 ## Install
 
@@ -38,7 +38,7 @@ Project profiles override global profiles with the same name.
     "coding": {
       "tools": ["read", "bash", "edit", "write"],
       "thinkingLevel": "high",
-      "instructions": "Make focused changes and validate them."
+      "appendSystemPrompt": "Make focused changes and validate them."
     },
     "security": {
       "skills": ["~/.agents/skills/apex-re", "~/.agents/skills/hypothesis"],
@@ -46,7 +46,7 @@ Project profiles override global profiles with the same name.
       "extensions": ["~/.pi/agent/profile-extensions/security-tools"],
       "tools": ["read", "bash", "edit", "write"],
       "thinkingLevel": "high",
-      "instructions": "Track hypotheses and document attempts."
+      "appendSystemPrompt": "Track hypotheses and document attempts."
     }
   }
 }

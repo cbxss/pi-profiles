@@ -15,7 +15,7 @@ type Profile = {
   provider?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
-  instructions?: string;
+  appendSystemPrompt?: string;
 };
 
 type LoadedProfile = Profile & { name: string; source: string };
@@ -188,12 +188,12 @@ export default function profilesExtension(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", (event) => {
-    if (!active?.instructions) return;
-    return { systemPrompt: `${event.systemPrompt}\n\n# Active pi profile: ${active.name}\n\n${active.instructions}` };
+    if (!active?.appendSystemPrompt) return;
+    return { systemPrompt: `${event.systemPrompt}\n\n# Active pi profile: ${active.name}\n\n${active.appendSystemPrompt}` };
   });
 
   pi.registerCommand("profiles", {
-    description: "Switch pi profiles: skills, extensions, prompts, tools, model, thinking, instructions",
+    description: "Switch pi profiles: skills, extensions, prompts, tools, model, thinking, appended system prompt",
     getArgumentCompletions(prefix) {
       const names = Object.keys(loadProfiles(process.cwd()));
       const matches = [...COMMANDS, ...names].filter((item) => item.startsWith(prefix));
@@ -220,7 +220,7 @@ export default function profilesExtension(pi: ExtensionAPI) {
               description: "Default coding setup",
               tools: ["read", "bash", "edit", "write"],
               thinkingLevel: "high",
-              instructions: "You are in coding mode. Make focused, correct changes and validate them.",
+              appendSystemPrompt: "Make focused changes and validate them.",
             },
           },
         });
