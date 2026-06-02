@@ -2,21 +2,18 @@
   "profiles": {
     "coding": {
       "description": "Default coding setup",
-      "skills": [],
-      "prompts": [],
-      "extensions": [],
       "tools": ["read", "bash", "edit", "write"],
       "thinkingLevel": "high",
-      "appendSystemPrompt": "You are in coding mode. Make focused, correct changes and validate them."
+      "appendSystemPrompt": "Make focused changes and validate them."
     },
     "security": {
       "description": "Security research setup",
-      "skills": ["~/.agents/skills/apex-re", "~/.agents/skills/hypothesis"],
-      "prompts": ["~/.pi/agent/profile-resources/security/prompts"],
-      "extensions": ["~/.pi/agent/profile-extensions/security-tools"],
+      "skills": ["./skills/apex-re", "./skills/hypothesis"],
+      "prompts": ["./prompts/security"],
+      "extensions": ["./extensions/security-tools"],
       "tools": ["read", "bash", "edit", "write"],
       "thinkingLevel": "high",
-      "appendSystemPrompt": "You are in security research mode. Track hypotheses, document attempts, and avoid destructive actions unless explicitly authorized."
+      "appendSystemPrompt": "Track hypotheses, document attempts, and avoid destructive actions unless explicitly authorized."
     }
   }
 }

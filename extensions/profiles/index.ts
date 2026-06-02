@@ -24,9 +24,11 @@ type State = { active?: string; extensions?: string[]; updatedAt?: string };
 
 const AGENT_DIR = getAgentDir();
 const GLOBAL_CONFIG = join(AGENT_DIR, "profiles.json");
+const PROFILE_REPO = join(AGENT_DIR, "profiles-repo");
+const REPO_CONFIG = join(PROFILE_REPO, "profiles.json");
 const STATE_FILE = join(AGENT_DIR, "profiles-state.json");
 const SETTINGS_FILE = join(AGENT_DIR, "settings.json");
-const COMMANDS = ["list", "current", "use", "clear", "init"];
+const COMMANDS = ["list", "current", "use", "clear", "init", "sync"];
 
 function projectConfig(cwd: string) {
   return join(cwd, ".pi", "profiles.json");
@@ -57,7 +59,7 @@ function resolvePath(path: string, fromFile: string, cwd: string) {
 function loadProfiles(cwd: string) {
   const profiles: Record<string, LoadedProfile> = {};
 
-  for (const file of [GLOBAL_CONFIG, projectConfig(cwd)]) {
+  for (const file of [GLOBAL_CONFIG, REPO_CONFIG, projectConfig(cwd)]) {
     const config = json<Config>(file, {});
     for (const [name, profile] of Object.entries(config.profiles ?? {})) {
       const paths = (items?: string[]) => items?.map((item) => resolvePath(item, file, cwd));
@@ -109,6 +111,19 @@ function summary(profile: LoadedProfile) {
     profile.provider && profile.model && `${profile.provider}/${profile.model}`,
     profile.thinkingLevel && `thinking:${profile.thinkingLevel}`,
   ].filter(Boolean).join(" | ") || "No description";
+}
+
+function starterConfig(): Config {
+  return {
+    profiles: {
+      coding: {
+        description: "Default coding setup",
+        tools: ["read", "bash", "edit", "write"],
+        thinkingLevel: "high",
+        appendSystemPrompt: "Make focused changes and validate them.",
+      },
+    },
+  };
 }
 
 async function applyRuntime(profile: LoadedProfile, pi: ExtensionAPI, ctx: ExtensionContext) {
@@ -171,6 +186,58 @@ export default function profilesExtension(pi: ExtensionAPI) {
     pi.sendMessage({ customType: "profiles", content, display: true });
   }
 
+  function hasProfileRepo() {
+    return existsSync(join(PROFILE_REPO, ".git"));
+  }
+
+  async function git(args: string[], timeout = 30000) {
+    return pi.exec("git", ["-C", PROFILE_REPO, ...args], { timeout });
+  }
+
+  async function repoHasRemote() {
+    if (!hasProfileRepo()) return false;
+    const result = await git(["remote"], 5000);
+    return result.code === 0 && result.stdout.trim().length > 0;
+  }
+
+  async function pullProfiles(ctx: ExtensionContext, notify = false) {
+    if (!(await repoHasRemote())) return;
+    const result = await git(["pull", "--ff-only"], 30000);
+    if (notify) ctx.ui.notify(result.code === 0 ? "Profiles pulled" : `Profile pull failed: ${result.stderr || result.stdout}`, result.code === 0 ? "info" : "warning");
+  }
+
+  async function pushProfiles(ctx: ExtensionContext) {
+    if (!hasProfileRepo()) return ctx.ui.notify("No profile repo. Run /profiles init first.", "warning");
+
+    await git(["add", "-A"]);
+    const status = await git(["status", "--porcelain"]);
+    if (status.stdout.trim()) {
+      const commit = await git(["commit", "-m", "Update profiles"]);
+      if (commit.code !== 0) return ctx.ui.notify(`Profile commit failed: ${commit.stderr || commit.stdout}`, "warning");
+    }
+
+    const remotes = await git(["remote"], 5000);
+    const remote = remotes.stdout.trim().split(/\s+/)[0];
+    if (!remote) return ctx.ui.notify("Profile changes committed locally. Add a git remote to push.", "info");
+    const pushed = await git(["push", "-u", remote, "HEAD"]);
+    ctx.ui.notify(pushed.code === 0 ? "Profiles pushed" : `Profile push failed: ${pushed.stderr || pushed.stdout}`, pushed.code === 0 ? "info" : "warning");
+  }
+
+  async function initProfileRepo(ctx: ExtensionContext, remote?: string) {
+    if (remote && !existsSync(PROFILE_REPO)) {
+      const cloned = await pi.exec("git", ["clone", remote, PROFILE_REPO], { timeout: 60000 });
+      if (cloned.code !== 0) return ctx.ui.notify(`Profile clone failed: ${cloned.stderr || cloned.stdout}`, "warning");
+    }
+
+    mkdirSync(PROFILE_REPO, { recursive: true });
+    if (!hasProfileRepo()) await pi.exec("git", ["-C", PROFILE_REPO, "init"], { timeout: 30000 });
+    if (remote && !(await repoHasRemote())) await git(["remote", "add", "origin", remote]);
+    if (!existsSync(REPO_CONFIG)) saveJson(REPO_CONFIG, starterConfig());
+
+    ctx.ui.notify(`Profile repo ready: ${PROFILE_REPO}. Reloading…`, "info");
+    await ctx.reload();
+  }
+
   pi.on("resources_discover", (event) => {
     const profile = refresh(event.cwd);
     if (!profile) return;
@@ -182,6 +249,7 @@ export default function profilesExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    await pullProfiles(ctx);
     refresh(ctx.cwd);
     if (active) await applyRuntime(active, pi, ctx);
     setStatus(ctx);
@@ -212,20 +280,17 @@ export default function profilesExtension(pi: ExtensionAPI) {
         return choice === "(clear)" ? clear(ctx) : activate(choice.replace(/ \(active\)$/, ""), ctx);
       }
 
-      if (command === "init") {
-        if (existsSync(GLOBAL_CONFIG)) return ctx.ui.notify(`${GLOBAL_CONFIG} already exists`, "warning");
-        saveJson(GLOBAL_CONFIG, {
-          profiles: {
-            coding: {
-              description: "Default coding setup",
-              tools: ["read", "bash", "edit", "write"],
-              thinkingLevel: "high",
-              appendSystemPrompt: "Make focused changes and validate them.",
-            },
-          },
-        });
-        ctx.ui.notify(`Created ${GLOBAL_CONFIG}. Reloading…`, "info");
-        return ctx.reload();
+      if (command === "init") return initProfileRepo(ctx, name);
+
+      if (command === "sync") {
+        if (name === "pull") {
+          await pullProfiles(ctx, true);
+          return ctx.reload();
+        }
+        if (name === "push") return pushProfiles(ctx);
+        if (!hasProfileRepo()) return ctx.ui.notify("No profile repo. Run /profiles init first.", "warning");
+        const status = await git(["status", "-sb"]);
+        return show(status.stdout.trim() || "Profile repo clean");
       }
 
       if (command === "list") {

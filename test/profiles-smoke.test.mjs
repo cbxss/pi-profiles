@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -28,17 +28,19 @@ test("/profiles init creates starter config", () => {
 
   runPi(agentDir, root, "/profiles init");
 
-  const config = readJson(join(agentDir, "profiles.json"));
+  assert.equal(existsSync(join(agentDir, "profiles-repo", ".git")), true);
+  const config = readJson(join(agentDir, "profiles-repo", "profiles.json"));
   assert.deepEqual(Object.keys(config.profiles), ["coding"]);
 });
 
 test("/profiles use and clear update state and managed extensions", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-profiles-"));
   const agentDir = join(root, "agent");
-  mkdirSync(agentDir, { recursive: true });
-  mkdirSync(join(agentDir, "profile-extensions", "security-tools"), { recursive: true });
+  const profileRepo = join(agentDir, "profiles-repo");
+  mkdirSync(profileRepo, { recursive: true });
+  mkdirSync(join(profileRepo, "profile-extensions", "security-tools"), { recursive: true });
 
-  writeFileSync(join(agentDir, "profiles.json"), JSON.stringify({
+  writeFileSync(join(profileRepo, "profiles.json"), JSON.stringify({
     profiles: {
       security: {
         extensions: ["./profile-extensions/security-tools"],
@@ -51,7 +53,7 @@ test("/profiles use and clear update state and managed extensions", () => {
 
   runPi(agentDir, root, "/profiles use security");
 
-  const expectedExtension = join(agentDir, "profile-extensions", "security-tools");
+  const expectedExtension = join(profileRepo, "profile-extensions", "security-tools");
   assert.deepEqual(readJson(join(agentDir, "profiles-state.json")).active, "security");
   assert.deepEqual(readJson(join(agentDir, "settings.json")).extensions, [expectedExtension]);
 

@@ -23,23 +23,27 @@ Then run `/reload` in pi.
 ## Commands
 
 ```text
-/profiles            pick a profile
-/profiles list       list profiles
-/profiles current    show active profile
-/profiles use NAME   switch profile
-/profiles NAME       switch profile
-/profiles clear      disable profiles
-/profiles init       create ~/.pi/agent/profiles.json
+/profiles              pick a profile
+/profiles list         list profiles
+/profiles current      show active profile
+/profiles use NAME     switch profile
+/profiles NAME         switch profile
+/profiles clear        disable profiles
+/profiles init [URL]   create or clone ~/.pi/agent/profiles-repo
+/profiles sync         git status for profiles-repo
+/profiles sync pull    git pull --ff-only
+/profiles sync push    commit changes and push
 ```
 
 ## Config
 
 Profiles live in:
 
-- `~/.pi/agent/profiles.json`
-- `.pi/profiles.json`
+- `~/.pi/agent/profiles-repo/profiles.json`
+- `~/.pi/agent/profiles.json` legacy fallback
+- `.pi/profiles.json` project override
 
-Project profiles override global profiles with the same name.
+`profiles-repo` is a normal git repo. pi pulls it on startup when a remote is configured. Put shared prompts, skills, and profile-only extensions next to `profiles.json`.
 
 ```json
 {
@@ -50,9 +54,9 @@ Project profiles override global profiles with the same name.
       "appendSystemPrompt": "Make focused changes and validate them."
     },
     "security": {
-      "skills": ["~/.agents/skills/apex-re", "~/.agents/skills/hypothesis"],
-      "prompts": ["~/.pi/agent/profile-resources/security/prompts"],
-      "extensions": ["~/.pi/agent/profile-extensions/security-tools"],
+      "skills": ["./skills/apex-re", "./skills/hypothesis"],
+      "prompts": ["./prompts/security"],
+      "extensions": ["./extensions/security-tools"],
       "tools": ["read", "bash", "edit", "write"],
       "thinkingLevel": "high",
       "appendSystemPrompt": "Track hypotheses and document attempts."
