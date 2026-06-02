@@ -40,10 +40,19 @@ Then run `/reload` in pi.
 Profiles live in:
 
 - `~/.pi/agent/profiles-repo/profiles.json`
-- `~/.pi/agent/profiles.json` legacy fallback
 - `.pi/profiles.json` project override
 
-`profiles-repo` is a normal git repo. pi pulls it on startup when a remote is configured. Put shared prompts, skills, and profile-only extensions next to `profiles.json`.
+`profiles-repo` is a normal git repo. pi pulls it on startup when a remote is configured.
+
+Keep shared resources inside the repo and use relative paths. Absolute paths and `~` are machine-local and won't sync cleanly.
+
+```text
+profiles-repo/
+  profiles.json
+  skills/
+  prompts/
+  extensions/
+```
 
 ```json
 {
@@ -65,6 +74,4 @@ Profiles live in:
 }
 ```
 
-Paths are resolved relative to the config file. `~`, `{cwd}`, and `${cwd}` work.
-
-Profile extensions should live outside `~/.pi/agent/extensions`; otherwise pi loads them all the time.
+Profile extensions should live in `profiles-repo/extensions`, not `~/.pi/agent/extensions`; otherwise pi loads them all the time.

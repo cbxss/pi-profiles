@@ -23,7 +23,6 @@ type Config = { profiles?: Record<string, Profile> };
 type State = { active?: string; extensions?: string[]; updatedAt?: string };
 
 const AGENT_DIR = getAgentDir();
-const GLOBAL_CONFIG = join(AGENT_DIR, "profiles.json");
 const PROFILE_REPO = join(AGENT_DIR, "profiles-repo");
 const REPO_CONFIG = join(PROFILE_REPO, "profiles.json");
 const STATE_FILE = join(AGENT_DIR, "profiles-state.json");
@@ -59,7 +58,7 @@ function resolvePath(path: string, fromFile: string, cwd: string) {
 function loadProfiles(cwd: string) {
   const profiles: Record<string, LoadedProfile> = {};
 
-  for (const file of [GLOBAL_CONFIG, REPO_CONFIG, projectConfig(cwd)]) {
+  for (const file of [REPO_CONFIG, projectConfig(cwd)]) {
     const config = json<Config>(file, {});
     for (const [name, profile] of Object.entries(config.profiles ?? {})) {
       const paths = (items?: string[]) => items?.map((item) => resolvePath(item, file, cwd));
