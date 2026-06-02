@@ -5,11 +5,20 @@ Profiles for pi. Switch skills, prompts, extensions, tools, model settings, and 
 ## Install
 
 ```bash
-git clone <repo> ~/code/pi-profiles
+pi install https://github.com/cbxss/pi-profiles
+```
+
+<details>
+<summary>Manual install</summary>
+
+```bash
+git clone https://github.com/cbxss/pi-profiles ~/code/pi-profiles
 ln -s ~/code/pi-profiles/extensions/profiles ~/.pi/agent/extensions/profiles
 ```
 
 Then run `/reload` in pi.
+
+</details>
 
 ## Commands
 
