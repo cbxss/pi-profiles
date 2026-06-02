@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type Scope = "session" | "project";
 
 type Profile = {
   description?: string;
@@ -20,17 +21,23 @@ type Profile = {
 
 type LoadedProfile = Profile & { name: string; source: string };
 type Config = { profiles?: Record<string, Profile> };
-type State = { active?: string; extensions?: string[]; updatedAt?: string };
+type State = { active?: string | null; extensions?: string[]; scope?: Scope; updatedAt?: string };
 
 const AGENT_DIR = getAgentDir();
 const PROFILE_REPO = join(AGENT_DIR, "profiles-repo");
 const REPO_CONFIG = join(PROFILE_REPO, "profiles.json");
-const STATE_FILE = join(AGENT_DIR, "profiles-state.json");
-const SETTINGS_FILE = join(AGENT_DIR, "settings.json");
 const COMMANDS = ["list", "current", "use", "clear", "init", "sync"];
 
 function projectConfig(cwd: string) {
   return join(cwd, ".pi", "profiles.json");
+}
+
+function projectStateFile(cwd: string) {
+  return join(cwd, ".pi", "profiles-state.json");
+}
+
+function projectSettingsFile(cwd: string) {
+  return join(cwd, ".pi", "settings.json");
 }
 
 function json<T>(path: string, fallback: T): T {
@@ -77,25 +84,26 @@ function loadProfiles(cwd: string) {
   return profiles;
 }
 
-function state(): State {
-  return json<State>(STATE_FILE, {});
+function projectState(cwd: string): State {
+  return json<State>(projectStateFile(cwd), {});
 }
 
-function saveState(next: State) {
-  saveJson(STATE_FILE, { ...next, updatedAt: new Date().toISOString() });
+function saveProjectState(cwd: string, next: State) {
+  saveJson(projectStateFile(cwd), { ...next, scope: "project", updatedAt: new Date().toISOString() });
 }
 
-function setProfileExtensions(next: string[] = []) {
-  const previous = new Set(state().extensions ?? []);
+function setProjectExtensions(cwd: string, next: string[] = []) {
+  const previous = new Set(projectState(cwd).extensions ?? []);
   if (previous.size === 0 && next.length === 0) return [];
 
-  const settings = json<Record<string, unknown>>(SETTINGS_FILE, {});
+  const settingsPath = projectSettingsFile(cwd);
+  const settings = json<Record<string, unknown>>(settingsPath, {});
   const current = Array.isArray(settings.extensions)
     ? settings.extensions.filter((item): item is string => typeof item === "string")
     : [];
 
   settings.extensions = Array.from(new Set([...current.filter((item) => !previous.has(item)), ...next]));
-  saveJson(SETTINGS_FILE, settings);
+  saveJson(settingsPath, settings);
   return next;
 }
 
@@ -145,39 +153,71 @@ async function applyRuntime(profile: LoadedProfile, pi: ExtensionAPI, ctx: Exten
 
 export default function profilesExtension(pi: ExtensionAPI) {
   let active: LoadedProfile | undefined;
+  let activeScope: Scope | undefined;
 
-  function refresh(cwd: string) {
-    const activeName = state().active;
-    active = activeName ? loadProfiles(cwd)[activeName] : undefined;
+  function sessionState(ctx: ExtensionContext): State {
+    const branch = ctx.sessionManager.getBranch() as Array<{ type?: string; customType?: string; data?: State }>;
+    for (const entry of [...branch].reverse()) {
+      if (entry.type === "custom" && entry.customType === "profiles-state") return entry.data ?? {};
+    }
+    return {};
+  }
+
+  function effectiveState(ctx: ExtensionContext): State {
+    const session = sessionState(ctx);
+    if ("active" in session) return { ...session, scope: "session" };
+
+    const project = projectState(ctx.cwd);
+    if ("active" in project) return { ...project, scope: "project" };
+
+    return {};
+  }
+
+  function refresh(ctx: ExtensionContext) {
+    const state = effectiveState(ctx);
+    activeScope = state.scope;
+    active = typeof state.active === "string" ? loadProfiles(ctx.cwd)[state.active] : undefined;
     return active;
   }
 
   function setStatus(ctx: ExtensionContext) {
-    ctx.ui.setStatus("profiles", active ? ctx.ui.theme.fg("accent", `profile:${active.name}`) : undefined);
+    const label = active ? `profile:${active.name}${activeScope === "project" ? ":project" : ""}` : undefined;
+    ctx.ui.setStatus("profiles", label ? ctx.ui.theme.fg("accent", label) : undefined);
   }
 
-  async function activate(name: string, ctx: ExtensionContext) {
+  async function activate(name: string, ctx: ExtensionContext, scope: Scope) {
     const profile = loadProfiles(ctx.cwd)[name];
-    if (!profile) {
-      ctx.ui.notify(`Unknown profile "${name}"`, "error");
-      return;
+    if (!profile) return ctx.ui.notify(`Unknown profile "${name}"`, "error");
+
+    if (scope === "project") {
+      const extensions = setProjectExtensions(ctx.cwd, profile.extensions);
+      saveProjectState(ctx.cwd, { active: name, extensions });
+    } else {
+      if (profile.extensions?.length) ctx.ui.notify("Profile extensions require --project scope; skipped for this session.", "warning");
+      pi.appendEntry("profiles-state", { active: name, scope: "session" });
     }
 
-    const extensions = setProfileExtensions(profile.extensions);
-    saveState({ active: name, extensions });
     active = profile;
+    activeScope = scope;
     await applyRuntime(profile, pi, ctx);
     setStatus(ctx);
-    ctx.ui.notify(`Profile "${name}" activated. Reloading…`, "info");
+    ctx.ui.notify(`Profile "${name}" activated for ${scope}. Reloading…`, "info");
     await ctx.reload();
   }
 
-  async function clear(ctx: ExtensionContext) {
-    setProfileExtensions([]);
-    saveState({ active: undefined, extensions: [] });
+  async function clear(ctx: ExtensionContext, scope?: Scope) {
+    const target = scope ?? effectiveState(ctx).scope ?? "session";
+    if (target === "project") {
+      setProjectExtensions(ctx.cwd, []);
+      saveProjectState(ctx.cwd, { active: null, extensions: [] });
+    } else {
+      pi.appendEntry("profiles-state", { active: null, scope: "session" });
+    }
+
     active = undefined;
+    activeScope = undefined;
     setStatus(ctx);
-    ctx.ui.notify("Profile cleared. Reloading…", "info");
+    ctx.ui.notify(`Profile cleared for ${target}. Reloading…`, "info");
     await ctx.reload();
   }
 
@@ -237,8 +277,8 @@ export default function profilesExtension(pi: ExtensionAPI) {
     await ctx.reload();
   }
 
-  pi.on("resources_discover", (event) => {
-    const profile = refresh(event.cwd);
+  pi.on("resources_discover", (_event, ctx) => {
+    const profile = refresh(ctx);
     if (!profile) return;
     return {
       skillPaths: profile.skills ?? [],
@@ -249,7 +289,7 @@ export default function profilesExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     await pullProfiles(ctx);
-    refresh(ctx.cwd);
+    refresh(ctx);
     if (active) await applyRuntime(active, pi, ctx);
     setStatus(ctx);
   });
@@ -267,16 +307,19 @@ export default function profilesExtension(pi: ExtensionAPI) {
       return matches.length ? matches.map((value) => ({ value, label: value })) : null;
     },
     async handler(args, ctx) {
-      const [command, name] = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const rawParts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const scope: Scope = rawParts.includes("--project") ? "project" : "session";
+      const [command, name] = rawParts.filter((part) => part !== "--project");
       const profiles = loadProfiles(ctx.cwd);
-      const activeName = state().active;
+      const current = effectiveState(ctx);
+      const activeName = typeof current.active === "string" ? current.active : undefined;
 
       if (!command) {
         const names = Object.keys(profiles).sort();
-        if (!names.length) return ctx.ui.notify(`No profiles found. Run /profiles init`, "warning");
+        if (!names.length) return ctx.ui.notify("No profiles found. Run /profiles init", "warning");
         const choice = await ctx.ui.select("Select profile", ["(clear)", ...names.map((n) => n === activeName ? `${n} (active)` : n)]);
         if (!choice) return;
-        return choice === "(clear)" ? clear(ctx) : activate(choice.replace(/ \(active\)$/, ""), ctx);
+        return choice === "(clear)" ? clear(ctx) : activate(choice.replace(/ \(active\)$/, ""), ctx, "session");
       }
 
       if (command === "init") return initProfileRepo(ctx, name);
@@ -294,18 +337,19 @@ export default function profilesExtension(pi: ExtensionAPI) {
 
       if (command === "list") {
         const names = Object.keys(profiles).sort();
-        if (!names.length) return ctx.ui.notify(`No profiles found. Run /profiles init`, "warning");
+        if (!names.length) return ctx.ui.notify("No profiles found. Run /profiles init", "warning");
         return show(names.map((n) => `${n === activeName ? "*" : " "} ${n} — ${summary(profiles[n])}`).join("\n"));
       }
 
       if (command === "current") {
-        const current = activeName ? profiles[activeName] : undefined;
-        return show(current ? `Active profile: ${current.name}\n${summary(current)}\nSource: ${current.source}` : "No active profile.");
+        const profile = activeName ? profiles[activeName] : undefined;
+        const scopeLabel = current.scope ? ` (${current.scope})` : "";
+        return show(profile ? `Active profile${scopeLabel}: ${profile.name}\n${summary(profile)}\nSource: ${profile.source}` : "No active profile.");
       }
 
-      if (command === "clear") return clear(ctx);
-      if (command === "use") return name ? activate(name, ctx) : ctx.ui.notify("Usage: /profiles use <name>", "info");
-      return activate(command, ctx);
+      if (command === "clear") return clear(ctx, scope);
+      if (command === "use") return name ? activate(name, ctx, scope) : ctx.ui.notify("Usage: /profiles use <name> [--project]", "info");
+      return activate(command, ctx, scope);
     },
   });
 }

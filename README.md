@@ -26,9 +26,13 @@ Then run `/reload` in pi.
 /profiles              pick a profile
 /profiles list         list profiles
 /profiles current      show active profile
-/profiles use NAME     switch profile
-/profiles NAME         switch profile
-/profiles clear        disable profiles
+/profiles use NAME     switch profile for this session
+/profiles NAME         switch profile for this session
+/profiles use NAME --project
+                      switch profile for this repo
+/profiles clear        disable profile for this session
+/profiles clear --project
+                      disable profile for this repo
 /profiles init [URL]   create or clone ~/.pi/agent/profiles-repo
 /profiles sync         git status for profiles-repo
 /profiles sync pull    git pull --ff-only
@@ -74,4 +78,6 @@ profiles-repo/
 }
 ```
 
-Profile extensions should live in `profiles-repo/extensions`, not `~/.pi/agent/extensions`; otherwise pi loads them all the time.
+By default, profiles are session-scoped, so other pi terminals stay unchanged. Use `--project` to make the profile stick for the current repo.
+
+Profile extensions only apply with `--project`, because pi loads extensions from settings during reload. Keep them in `profiles-repo/extensions`, not `~/.pi/agent/extensions`; otherwise pi loads them all the time.

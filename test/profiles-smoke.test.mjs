@@ -33,7 +33,25 @@ test("/profiles init creates starter config", () => {
   assert.deepEqual(Object.keys(config.profiles), ["coding"]);
 });
 
-test("/profiles use and clear update state and managed extensions", () => {
+test("/profiles use defaults to session scope", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-profiles-"));
+  const agentDir = join(root, "agent");
+  const profileRepo = join(agentDir, "profiles-repo");
+  mkdirSync(profileRepo, { recursive: true });
+
+  writeFileSync(join(profileRepo, "profiles.json"), JSON.stringify({
+    profiles: {
+      security: { tools: ["read"], appendSystemPrompt: "Track hypotheses." },
+    },
+  }, null, 2));
+
+  runPi(agentDir, root, "/profiles use security");
+
+  assert.equal(existsSync(join(root, ".pi", "profiles-state.json")), false);
+  assert.equal(existsSync(join(root, ".pi", "settings.json")), false);
+});
+
+test("/profiles use --project and clear --project update repo state and managed extensions", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-profiles-"));
   const agentDir = join(root, "agent");
   const profileRepo = join(agentDir, "profiles-repo");
@@ -51,14 +69,14 @@ test("/profiles use and clear update state and managed extensions", () => {
     },
   }, null, 2));
 
-  runPi(agentDir, root, "/profiles use security");
+  runPi(agentDir, root, "/profiles use security --project");
 
   const expectedExtension = join(profileRepo, "profile-extensions", "security-tools");
-  assert.deepEqual(readJson(join(agentDir, "profiles-state.json")).active, "security");
-  assert.deepEqual(readJson(join(agentDir, "settings.json")).extensions, [expectedExtension]);
+  assert.deepEqual(readJson(join(root, ".pi", "profiles-state.json")).active, "security");
+  assert.deepEqual(readJson(join(root, ".pi", "settings.json")).extensions, [expectedExtension]);
 
-  runPi(agentDir, root, "/profiles clear");
+  runPi(agentDir, root, "/profiles clear --project");
 
-  assert.equal(readJson(join(agentDir, "profiles-state.json")).active, undefined);
-  assert.deepEqual(readJson(join(agentDir, "settings.json")).extensions, []);
+  assert.equal(readJson(join(root, ".pi", "profiles-state.json")).active, null);
+  assert.deepEqual(readJson(join(root, ".pi", "settings.json")).extensions, []);
 });
